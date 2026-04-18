@@ -23,6 +23,7 @@ import {
 	Terminal,
 	Trash2,
 	Unplug,
+	Maximize2,
 } from "lucide-react";
 import type { McpStatus } from "@opencode-ai/sdk/v2/client";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
@@ -543,6 +544,7 @@ function GeneralSettings() {
 			<TerminalSetting />
 			<ModelAgeFilterSetting />
 			<NotificationsToggle />
+			<ChatWidthSetting />
 			<AlertDialog>
 				<AlertDialogTrigger asChild>
 					<Button
@@ -1128,6 +1130,86 @@ function McpTabContent() {
 					);
 				})
 			)}
+		</div>
+	);
+}
+
+// Chat width setting
+// ---------------------------------------------------------------------------
+
+function ChatWidthSetting() {
+	const CHAT_WIDTH_MIN = 400;
+	const CHAT_WIDTH_MAX = 1200;
+	const CHAT_WIDTH_DEFAULT = 640;
+
+	const [width, setWidth] = useState(() => {
+		const stored = localStorage.getItem(STORAGE_KEYS.CHAT_WIDTH);
+		if (stored) {
+			const parsed = parseInt(stored, 10);
+			if (
+				Number.isFinite(parsed) &&
+				parsed >= CHAT_WIDTH_MIN &&
+				parsed <= CHAT_WIDTH_MAX
+			) {
+				return parsed;
+			}
+		}
+		return CHAT_WIDTH_DEFAULT;
+	});
+
+	const handleChange = (newWidth: string) => {
+		const parsed = parseInt(newWidth, 10);
+		if (Number.isFinite(parsed)) {
+			setWidth(parsed);
+		}
+	};
+
+	const handleBlur = () => {
+		const clamped = Math.min(CHAT_WIDTH_MAX, Math.max(CHAT_WIDTH_MIN, width));
+		setWidth(clamped);
+		localStorage.setItem(STORAGE_KEYS.CHAT_WIDTH, String(clamped));
+		window.dispatchEvent(new Event("chat-width-changed"));
+	};
+
+	const handleReset = () => {
+		setWidth(CHAT_WIDTH_DEFAULT);
+		localStorage.removeItem(STORAGE_KEYS.CHAT_WIDTH);
+		window.dispatchEvent(new Event("chat-width-changed"));
+	};
+
+	return (
+		<div className="space-y-2 pt-3 border-t">
+			<div className="flex items-center gap-2">
+				<Maximize2 className="size-4 text-muted-foreground" />
+				<Label htmlFor="chat-width" className="text-sm font-normal">
+					Chat width
+				</Label>
+			</div>
+			<div className="flex items-center gap-2">
+				<Input
+					id="chat-width"
+					type="number"
+					min={CHAT_WIDTH_MIN}
+					max={CHAT_WIDTH_MAX}
+					value={width}
+					onChange={(e) => handleChange(e.target.value)}
+					onBlur={handleBlur}
+					className="font-mono text-sm w-24"
+				/>
+				<Label className="text-sm text-muted-foreground">px</Label>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={handleReset}
+					className="text-xs text-muted-foreground hover:text-foreground"
+				>
+					Reset
+				</Button>
+			</div>
+			<p className="text-[11px] text-muted-foreground">
+				Width of the chat area in pixels ({CHAT_WIDTH_MIN}-{CHAT_WIDTH_MAX}px).
+			</p>
 		</div>
 	);
 }

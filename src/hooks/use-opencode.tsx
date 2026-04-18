@@ -3190,6 +3190,29 @@ export function OpenCodeProvider({
 		};
 	}, [bridge, addProject, detachedProject]);
 
+	// Ref to hold selectSession for use before it's defined
+	const selectSessionRef = useRef<((id: string | null) => Promise<void>) | null>(null);
+
+	// Restore last active session when switching to a workspace
+	const initialRestoreRef = useRef(false);
+	useEffect(() => {
+		if (initialRestoreRef.current) return;
+		if (state.bootState !== "ready") return;
+		initialRestoreRef.current = true;
+
+		const workspace = state.workspaces.find(
+			(w) => w.id === state.activeWorkspaceId,
+		);
+		if (workspace?.lastActiveSessionId) {
+			const exists = state.sessions.some(
+				(s) => s.id === workspace.lastActiveSessionId,
+			);
+			if (exists && selectSessionRef.current) {
+				void selectSessionRef.current(workspace.lastActiveSessionId);
+			}
+		}
+	}, [state.bootState, state.activeWorkspaceId, state.workspaces, state.sessions]);
+
 	const activeWorkspace = useMemo(
 		() =>
 			state.workspaces.find(
@@ -3573,6 +3596,9 @@ export function OpenCodeProvider({
 			hydrateChildSessionsForMessages,
 		],
 	);
+
+	// Update ref so earlier effects can use selectSession
+	selectSessionRef.current = selectSession;
 
 	const loadOlderMessages = useCallback(async (): Promise<boolean> => {
 		const {
