@@ -195,6 +195,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 				agent,
 				variant,
 			),
+		summarizeSession: (sessionId, model) =>
+			ipcRenderer.invoke("opencode:session:summarize", sessionId, model),
 
 		// Questions
 		replyQuestion: (requestID, answers) =>

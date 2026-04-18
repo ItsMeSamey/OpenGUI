@@ -205,6 +205,7 @@ export interface OpenCodeBridge {
 		agent?: string,
 		variant?: string,
 	): Promise<IPCResult>;
+	summarizeSession(sessionId: string, model?: SelectedModel): Promise<IPCResult>;
 
 	getMessages(
 		sessionId: string,
