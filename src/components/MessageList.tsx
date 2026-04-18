@@ -117,8 +117,12 @@ function TerminalOutput({
 
 export function MessageList({
 	detachedProject: _detachedProject,
+	chatWidth,
+	onChatWidthChange,
 }: {
 	detachedProject?: string;
+	chatWidth?: number;
+	onChatWidthChange?: (width: number) => void;
 }) {
 	const {
 		respondPermission,
@@ -174,6 +178,11 @@ export function MessageList({
 	const topSentinelRef = useRef<HTMLDivElement>(null);
 	/** Track message count before a prepend so we can preserve scroll position. */
 	const prevMessageCountRef = useRef(0);
+	/** Track if user has scrolled up and there are new messages below */
+	const hasNewMessagesRef = useRef(false);
+	const [showNewMessagesButton, setShowNewMessagesButton] = useState(false);
+	/** Debounce timer for scroll-to-bottom */
+	const scrollDebounceRef = useRef<number | null>(null);
 
 	// ---- auto-load older messages when scrolled near the top ----
 
@@ -254,6 +263,11 @@ export function MessageList({
 	const handleScroll = useCallback(() => {
 		if (isProgrammaticScrollRef.current) return;
 		isNearBottomRef.current = checkNearBottom();
+		// If user scrolls back to bottom, hide the "new messages" button
+		if (isNearBottomRef.current) {
+			hasNewMessagesRef.current = false;
+			setShowNewMessagesButton(false);
+		}
 	}, [checkNearBottom]);
 
 	// ---- session switch: mark flag so the layout effect can scroll before paint ----
@@ -406,17 +420,37 @@ export function MessageList({
 		sessionJustSwitchedRef.current = false;
 	}, [scrollToBottom, visibleMessages]);
 
-	// ---- streaming / new content: scroll only if sticky ----
+	// ---- streaming / new content: scroll only if sticky, debounced ----
 
 	useEffect(() => {
 		// visibleMessages is intentionally in the dep array so this effect
 		// re-fires on every streaming delta, keeping the view pinned to the
 		// bottom while new tokens arrive.
 		if (!visibleMessages.length) return;
-		if (!isNearBottomRef.current) return;
 		// Skip if we already handled this render in the layout effect above.
 		if (sessionJustSwitchedRef.current) return;
-		scrollToBottom();
+
+		// If user scrolled away, show button instead of auto-scrolling
+		if (!isNearBottomRef.current) {
+			hasNewMessagesRef.current = true;
+			setShowNewMessagesButton(true);
+			return;
+		}
+
+		// Debounce scroll to avoid jerky updates
+		if (scrollDebounceRef.current !== null) {
+			clearTimeout(scrollDebounceRef.current);
+		}
+		scrollDebounceRef.current = window.setTimeout(() => {
+			scrollToBottom();
+		}, 500);
+
+		return () => {
+			if (scrollDebounceRef.current !== null) {
+				clearTimeout(scrollDebounceRef.current);
+				scrollDebounceRef.current = null;
+			}
+		};
 	}, [scrollToBottom, visibleMessages]);
 
 	if (isLoadingMessages) {
@@ -436,7 +470,10 @@ export function MessageList({
 	) {
 		return (
 			<div className="flex-1 flex items-center justify-center">
-				<div className="w-full max-w-3xl flex flex-col items-center">
+				<div
+					className="w-full flex flex-col items-center"
+					style={chatWidth ? { width: chatWidth, maxWidth: chatWidth } : { maxWidth: "640px" }}
+				>
 					<img
 						src={logoDark}
 						alt="OpenGUI"
@@ -458,9 +495,42 @@ export function MessageList({
 		<div
 			ref={listRef}
 			onScroll={handleScroll}
-			className="flex-1 overflow-auto px-4 py-4"
+			className="flex-1 overflow-auto px-4 py-4 relative"
 		>
-			<div className="max-w-[640px] mx-auto">
+			{/* Resize handle on the left edge */}
+			{onChatWidthChange && (
+				<div
+					className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 transition-colors group"
+					onMouseDown={(e) => {
+						e.preventDefault();
+						const startX = e.clientX;
+						const startWidth = chatWidth ?? 640;
+
+						const onMouseMove = (moveEvent: MouseEvent) => {
+							const delta = moveEvent.clientX - startX;
+							onChatWidthChange(startWidth + delta);
+						};
+
+						const onMouseUp = () => {
+							document.removeEventListener("mousemove", onMouseMove);
+							document.removeEventListener("mouseup", onMouseUp);
+						};
+
+						document.addEventListener("mousemove", onMouseMove);
+						document.addEventListener("mouseup", onMouseUp);
+					}}
+				>
+					<div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-border group-hover:bg-primary rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
+				</div>
+			)}
+			<div
+				className="mx-auto"
+				style={
+					chatWidth
+						? { width: chatWidth, maxWidth: chatWidth }
+						: { maxWidth: 640 }
+				}
+			>
 				{/* Sentinel for auto-loading older messages */}
 				{messageHistoryHasMore && (
 					<div ref={topSentinelRef} className="h-px w-full" />
@@ -569,6 +639,21 @@ export function MessageList({
 						onSubmit={(answers) => replyQuestion(answers)}
 						onDismiss={() => rejectQuestion()}
 					/>
+				)}
+
+				{showNewMessagesButton && (
+					<button
+						type="button"
+						onClick={() => {
+							isProgrammaticScrollRef.current = true;
+							scrollToBottom();
+							setShowNewMessagesButton(false);
+							hasNewMessagesRef.current = false;
+						}}
+						className="sticky bottom-2 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground px-3 py-1.5 rounded-full text-xs shadow-lg hover:bg-primary/90 transition-colors"
+					>
+						New messages
+					</button>
 				)}
 			</div>
 		</div>

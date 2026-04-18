@@ -30,7 +30,7 @@ import {
 	useSessionState,
 } from "@/hooks/use-opencode";
 import { useUpdateCheck } from "@/hooks/use-update-check";
-import { POST_MERGE_DELAY_MS } from "@/lib/constants";
+import { POST_MERGE_DELAY_MS, STORAGE_KEYS } from "@/lib/constants";
 import {
 	buildPRUrl,
 	computeTokenTotal,
@@ -64,6 +64,7 @@ function AppContent({ detachedProject }: { detachedProject?: string }) {
 		unregisterWorktree,
 		revertToMessage,
 		unrevert,
+		selectSession,
 	} = useActions();
 	const {
 		sessions,
@@ -382,6 +383,56 @@ function AppContent({ detachedProject }: { detachedProject?: string }) {
 	// Check for app updates on startup
 	const updateCheck = useUpdateCheck();
 
+	// ---- save/restore active view (chat/settings) ----
+	useEffect(() => {
+		const stored = localStorage.getItem(STORAGE_KEYS.LAST_OPENED_TAB);
+		if (stored === "chat" || stored === "settings") {
+			setActiveView(stored);
+		}
+	}, []);
+
+	useEffect(() => {
+		localStorage.setItem(STORAGE_KEYS.LAST_OPENED_TAB, activeView);
+	}, [activeView]);
+
+	// ---- resizable chat width ----
+	const CHAT_WIDTH_MIN = 400;
+	const CHAT_WIDTH_MAX = 1200;
+	const CHAT_WIDTH_DEFAULT = 640;
+	const [chatWidth, setChatWidth] = useState(() => {
+		const stored = localStorage.getItem(STORAGE_KEYS.CHAT_WIDTH);
+		if (stored) {
+			const parsed = parseInt(stored, 10);
+			if (Number.isFinite(parsed) && parsed >= CHAT_WIDTH_MIN && parsed <= CHAT_WIDTH_MAX) {
+				return parsed;
+			}
+		}
+		return CHAT_WIDTH_DEFAULT;
+	});
+
+	const handleChatWidthChange = useCallback((newWidth: number) => {
+		const clamped = Math.min(CHAT_WIDTH_MAX, Math.max(CHAT_WIDTH_MIN, newWidth));
+		setChatWidth(clamped);
+		localStorage.setItem(STORAGE_KEYS.CHAT_WIDTH, String(clamped));
+	}, []);
+
+	// Listen for chat width changes from settings panel
+	useEffect(() => {
+		const handleWidthChange = () => {
+			const stored = localStorage.getItem(STORAGE_KEYS.CHAT_WIDTH);
+			if (stored) {
+				const parsed = parseInt(stored, 10);
+				if (Number.isFinite(parsed) && parsed >= CHAT_WIDTH_MIN && parsed <= CHAT_WIDTH_MAX) {
+					setChatWidth(parsed);
+				}
+			} else {
+				setChatWidth(CHAT_WIDTH_DEFAULT);
+			}
+		};
+		window.addEventListener("chat-width-changed", handleWidthChange);
+		return () => window.removeEventListener("chat-width-changed", handleWidthChange);
+	}, []);
+
 	return (
 		<>
 			<AppSidebar
@@ -464,7 +515,10 @@ function AppContent({ detachedProject }: { detachedProject?: string }) {
 								{/* Chat area */}
 								{activeWorktreeInfo && (
 									<div className="border-b border-border bg-muted/20">
-										<div className="mx-auto flex max-w-2xl items-center justify-end gap-2 px-4 py-2">
+										<div
+											className="mx-auto flex items-center justify-end gap-2 px-4 py-2"
+											style={chatWidth ? { width: chatWidth, maxWidth: chatWidth } : { maxWidth: "640px" }}
+										>
 											<Button
 												variant="outline"
 												size="sm"
@@ -492,11 +546,18 @@ function AppContent({ detachedProject }: { detachedProject?: string }) {
 										</div>
 									</div>
 								)}
-								<MessageList detachedProject={detachedProject} />
+								<MessageList
+									detachedProject={detachedProject}
+									chatWidth={chatWidth}
+									onChatWidthChange={handleChatWidthChange}
+								/>
 
 								{/* Queue list + Prompt input */}
 								<div className="shrink-0 px-4 pb-3">
-									<div className="max-w-2xl mx-auto">
+									<div
+										className="mx-auto"
+										style={chatWidth ? { width: chatWidth, maxWidth: chatWidth } : { maxWidth: "640px" }}
+									>
 										{queuedPrompts.length > 0 && (
 											<div className="mb-1.5">
 												<QueueList

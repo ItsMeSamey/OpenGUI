@@ -41,6 +41,9 @@ export const STORAGE_KEYS = {
 	DISMISSED_UPDATE_VERSION: "opencode:dismissedUpdateVersion",
 	FILE_MANAGER: "opencode:fileManager",
 	TERMINAL: "opencode:terminal",
+	CHAT_WIDTH: "opencode:chatWidth",
+	ACTIVE_SESSION_ID: "opencode:activeSessionId",
+	LAST_OPENED_TAB: "opencode:lastOpenedTab",
 } as const;
 
 // ---------------------------------------------------------------------------
