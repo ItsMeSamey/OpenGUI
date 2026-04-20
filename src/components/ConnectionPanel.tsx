@@ -7,19 +7,33 @@ import {
 	AlertCircle,
 	ArrowLeft,
 	Bell,
+	BookOpen,
 	CheckCircle2,
 	Folder,
+	Globe,
 	Layers,
-	Mic,
 	Play,
 	PlugZap,
+	RotateCcw,
 	Settings,
 	Square,
 	Terminal,
 	Unplug,
-	Maximize2,
 } from "lucide-react";
+import type { McpStatus } from "@opencode-ai/sdk/v2/client";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { SettingsProviders } from "@/components/SettingsProviders";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
@@ -104,12 +118,24 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
 						<TabsTrigger value="providers" className="flex-1">
 							Providers
 						</TabsTrigger>
+						<TabsTrigger value="skills" className="flex-1">
+							Skills
+						</TabsTrigger>
+						<TabsTrigger value="mcp" className="flex-1">
+							Tools
+						</TabsTrigger>
 					</TabsList>
 					<TabsContent value="general" className="mt-0 rounded-lg border p-4">
 						<GeneralSettings />
 					</TabsContent>
 					<TabsContent value="providers" className="mt-0 rounded-lg border p-4">
 						<SettingsProviders />
+					</TabsContent>
+					<TabsContent value="skills" className="mt-0 rounded-lg border p-4">
+						<SkillsTabContent />
+					</TabsContent>
+					<TabsContent value="mcp" className="mt-0 rounded-lg border p-4">
+						<McpTabContent />
 					</TabsContent>
 				</Tabs>
 			</div>
@@ -484,6 +510,22 @@ function _AddProjectForm({ onDone }: { onDone: () => void }) {
 // ---------------------------------------------------------------------------
 
 function GeneralSettings() {
+	const bridge = window.electronAPI?.opencode;
+	const [restarting, setRestarting] = useState(false);
+
+	const handleRestart = useCallback(async () => {
+		if (!bridge) return;
+		setRestarting(true);
+		try {
+			await bridge.stopServer();
+			await new Promise((r) => setTimeout(r, 1000));
+			await bridge.startServer();
+			await new Promise((r) => setTimeout(r, 2000));
+		} finally {
+			setRestarting(false);
+		}
+	}, [bridge]);
+
 	return (
 		<div className="flex flex-col gap-4">
 			<div className="flex items-center justify-between gap-3">
@@ -492,12 +534,42 @@ function GeneralSettings() {
 				</div>
 				<ThemeToggle />
 			</div>
-			<SttEndpointSetting />
 			<FileManagerSetting />
 			<TerminalSetting />
 			<ModelAgeFilterSetting />
 			<NotificationsToggle />
-			<ChatWidthSetting />
+			<AlertDialog>
+				<AlertDialogTrigger asChild>
+					<Button
+						variant="outline"
+						size="sm"
+						className="mt-2"
+						disabled={restarting}
+					>
+						{restarting ? (
+							<Spinner className="size-3.5 mr-2" />
+						) : (
+							<RotateCcw className="size-3.5 mr-2" />
+						)}
+						Restart Server
+					</Button>
+				</AlertDialogTrigger>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Restart Server?</AlertDialogTitle>
+						<AlertDialogDescription>
+							This will restart the server. All open sessions will be stopped
+							and you will need to reconnect.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogAction onClick={handleRestart}>
+							Restart
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 			<div className="flex items-center justify-between gap-3 pt-3 border-t">
 				<span className="text-xs text-muted-foreground">Version</span>
 				<span className="text-xs text-muted-foreground font-mono">
@@ -563,27 +635,6 @@ function StorageInputSetting({
 			/>
 			<p className="text-[11px] text-muted-foreground">{helpText}</p>
 		</div>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// STT endpoint setting
-// ---------------------------------------------------------------------------
-
-function SttEndpointSetting() {
-	return (
-		<StorageInputSetting
-			storageKey={STORAGE_KEYS.STT_ENDPOINT}
-			id="stt-endpoint"
-			icon={Mic}
-			label="Voice transcription endpoint"
-			placeholder="https://your-whisper-server.com/transcribe"
-			helpText="URL of Whisper-compatible STT server. Mic button only appears when this is set."
-			inputType="url"
-			onChangeExtra={() =>
-				window.dispatchEvent(new Event("stt-endpoint-changed"))
-			}
-		/>
 	);
 }
 
@@ -780,78 +831,253 @@ function TerminalSetting() {
 }
 
 // ---------------------------------------------------------------------------
-// Chat width setting
+// Skills tab content (inline)
 // ---------------------------------------------------------------------------
 
-function ChatWidthSetting() {
-	const CHAT_WIDTH_MIN = 400;
-	const CHAT_WIDTH_MAX = 1200;
-	const CHAT_WIDTH_DEFAULT = 640;
+interface SkillInfo {
+	name: string;
+	description: string;
+	location: string;
+	content: string;
+}
 
-	const [width, setWidth] = useState(() => {
-		const stored = localStorage.getItem(STORAGE_KEYS.CHAT_WIDTH);
-		if (stored) {
-			const parsed = parseInt(stored, 10);
-			if (Number.isFinite(parsed) && parsed >= CHAT_WIDTH_MIN && parsed <= CHAT_WIDTH_MAX) {
-				return parsed;
-			}
+function SkillsTabContent() {
+	const bridge = window.electronAPI?.opencode;
+	const { activeDirectory, activeWorkspaceId } = useConnectionState();
+	const scopedDirectory = activeDirectory ?? undefined;
+
+	const [skills, setSkills] = useState<SkillInfo[]>([]);
+	const [loading, setLoading] = useState(true);
+
+	const refresh = useCallback(async () => {
+		if (!bridge) return;
+		const skillsRes = await bridge.getSkills(
+			scopedDirectory,
+			activeWorkspaceId,
+		);
+		if (skillsRes.success && skillsRes.data) {
+			setSkills(skillsRes.data);
 		}
-		return CHAT_WIDTH_DEFAULT;
-	});
+		setLoading(false);
+	}, [bridge, scopedDirectory, activeWorkspaceId]);
 
-	const handleChange = (newWidth: string) => {
-		const parsed = parseInt(newWidth, 10);
-		if (Number.isFinite(parsed)) {
-			setWidth(parsed);
+	useEffect(() => {
+		void refresh();
+	}, [refresh]);
+
+	const getSourceType = (location: string): "local" | "url" => {
+		if (location.startsWith("http://") || location.startsWith("https://")) {
+			return "url";
 		}
+		return "local";
 	};
 
-	const handleBlur = () => {
-		const clamped = Math.min(CHAT_WIDTH_MAX, Math.max(CHAT_WIDTH_MIN, width));
-		setWidth(clamped);
-		localStorage.setItem(STORAGE_KEYS.CHAT_WIDTH, String(clamped));
-		window.dispatchEvent(new Event("chat-width-changed"));
-	};
-
-	const handleReset = () => {
-		setWidth(CHAT_WIDTH_DEFAULT);
-		localStorage.removeItem(STORAGE_KEYS.CHAT_WIDTH);
-		window.dispatchEvent(new Event("chat-width-changed"));
-	};
+	if (loading) {
+		return (
+			<div className="flex items-center justify-center py-8">
+				<Spinner className="size-5" />
+			</div>
+		);
+	}
 
 	return (
-		<div className="space-y-2 pt-3 border-t">
-			<div className="flex items-center gap-2">
-				<Maximize2 className="size-4 text-muted-foreground" />
-				<Label htmlFor="chat-width" className="text-sm font-normal">
-					Chat width
-				</Label>
+		<div className="space-y-6">
+			<div className="space-y-3">
+				<h3 className="text-sm font-medium">Available Skills</h3>
+				{skills.length === 0 ? (
+					<div className="text-center py-4 text-sm text-muted-foreground">
+						No skills discovered.
+					</div>
+				) : (
+					<div className="space-y-2">
+						{skills.map((skill) => {
+							const source = getSourceType(skill.location);
+							return (
+								<div
+									key={skill.name}
+									className="flex items-start gap-3 rounded-lg border p-3 bg-card"
+								>
+									<BookOpen className="size-4 text-muted-foreground shrink-0 mt-0.5" />
+									<div className="flex-1 min-w-0">
+										<div className="flex items-center gap-2">
+											<span className="text-sm font-medium">{skill.name}</span>
+											<Badge
+												variant="secondary"
+												className="text-[10px] px-1.5 py-0"
+											>
+												{source === "url" ? "Remote" : "Local"}
+											</Badge>
+										</div>
+										<p className="text-xs text-muted-foreground mt-0.5">
+											{skill.description}
+										</p>
+										<p className="text-[10px] text-muted-foreground font-mono truncate mt-1">
+											{skill.location}
+										</p>
+									</div>
+								</div>
+							);
+						})}
+					</div>
+				)}
 			</div>
-			<div className="flex items-center gap-2">
-				<Input
-					id="chat-width"
-					type="number"
-					min={CHAT_WIDTH_MIN}
-					max={CHAT_WIDTH_MAX}
-					value={width}
-					onChange={(e) => handleChange(e.target.value)}
-					onBlur={handleBlur}
-					className="font-mono text-sm w-24"
-				/>
-				<Label className="text-sm text-muted-foreground">px</Label>
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					onClick={handleReset}
-					className="text-xs text-muted-foreground hover:text-foreground"
-				>
-					Reset
-				</Button>
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// MCP/Tools tab content (inline)
+// ---------------------------------------------------------------------------
+
+function McpTabContent() {
+	const bridge = window.electronAPI?.opencode;
+	const { activeDirectory, activeWorkspaceId } = useConnectionState();
+	const scopedDirectory = activeDirectory ?? undefined;
+
+	const [mcpStatus, setMcpStatus] = useState<{ [key: string]: McpStatus }>({});
+	const [mcpTypes, setMcpTypes] = useState<{
+		[key: string]: "local" | "remote";
+	}>({});
+	const [loading, setLoading] = useState(true);
+	const [toggling, setToggling] = useState<string | null>(null);
+
+	const refresh = useCallback(async () => {
+		if (!bridge) return;
+		const [statusRes, configRes] = await Promise.all([
+			bridge.getMcpStatus(scopedDirectory, activeWorkspaceId),
+			bridge.getConfig(scopedDirectory, activeWorkspaceId),
+		]);
+		if (statusRes.success && statusRes.data) {
+			setMcpStatus(statusRes.data);
+		}
+		if (configRes.success && configRes.data?.mcp) {
+			const types: { [key: string]: "local" | "remote" } = {};
+			for (const [name, cfg] of Object.entries(configRes.data.mcp)) {
+				if (cfg && typeof cfg === "object" && "type" in cfg) {
+					types[name] = (cfg as { type: "local" | "remote" }).type;
+				}
+			}
+			setMcpTypes(types);
+		}
+		setLoading(false);
+	}, [bridge, scopedDirectory, activeWorkspaceId]);
+
+	useEffect(() => {
+		void refresh();
+	}, [refresh]);
+
+	const handleToggle = async (name: string, currentStatus: McpStatus) => {
+		if (!bridge) return;
+		setToggling(name);
+		try {
+			if (currentStatus.status === "connected") {
+				await bridge.disconnectMcp(scopedDirectory, activeWorkspaceId, name);
+			} else {
+				await bridge.connectMcp(scopedDirectory, activeWorkspaceId, name);
+			}
+			await new Promise((r) => setTimeout(r, 500));
+			await refresh();
+		} finally {
+			setToggling(null);
+		}
+	};
+
+	const STATUS_CONFIG = {
+		connected: {
+			variant: "default" as const,
+			label: "Connected",
+			icon: CheckCircle2,
+			className: "bg-emerald-600 hover:bg-emerald-600",
+		},
+		disabled: { variant: "secondary" as const, label: "Disabled" },
+		failed: {
+			variant: "destructive" as const,
+			label: "Failed",
+			icon: AlertCircle,
+		},
+		needs_auth: {
+			variant: "outline" as const,
+			label: "Needs auth",
+			className: "text-amber-500 border-amber-500",
+		},
+		needs_client_registration: {
+			variant: "outline" as const,
+			label: "Needs registration",
+			className: "text-amber-500 border-amber-500",
+		},
+	} as const;
+
+	const entries = Object.entries(mcpStatus).sort(([a], [b]) =>
+		a.localeCompare(b),
+	);
+
+	if (loading) {
+		return (
+			<div className="flex items-center justify-center py-8">
+				<Spinner className="size-5" />
 			</div>
-			<p className="text-[11px] text-muted-foreground">
-				Width of the chat area in pixels ({CHAT_WIDTH_MIN}-{CHAT_WIDTH_MAX}px).
-			</p>
+		);
+	}
+
+	return (
+		<div className="space-y-2">
+			{entries.length === 0 ? (
+				<div className="text-center py-6 text-sm text-muted-foreground">
+					No MCP servers configured.
+				</div>
+			) : (
+				entries.map(([name, status]) => {
+					const isConnected = status.status === "connected";
+					const isToggling = toggling === name;
+					const type = mcpTypes[name];
+					const config = STATUS_CONFIG[
+						status.status as keyof typeof STATUS_CONFIG
+					] ?? { variant: "secondary" as const, label: "Unknown" };
+					const BadgeIcon = "icon" in config ? config.icon : undefined;
+
+					return (
+						<div
+							key={name}
+							className="flex items-center gap-3 rounded-lg border p-3 bg-card"
+						>
+							<div className="shrink-0 text-muted-foreground">
+								{type === "remote" ? (
+									<Globe className="size-4" />
+								) : (
+									<Terminal className="size-4" />
+								)}
+							</div>
+							<div className="flex-1 min-w-0">
+								<div className="flex items-center gap-2">
+									<span className="text-sm font-medium font-mono truncate">
+										{name}
+									</span>
+									<Badge
+										variant={config.variant}
+										className={`text-xs${BadgeIcon ? " gap-1" : ""}${"className" in config ? ` ${config.className}` : ""}`}
+									>
+										{BadgeIcon && <BadgeIcon className="size-3" />}
+										{config.label}
+									</Badge>
+								</div>
+								{status.status === "failed" && "error" in status && (
+									<p className="text-[11px] text-destructive truncate mt-0.5">
+										{status.error}
+									</p>
+								)}
+							</div>
+							<div className="flex items-center gap-1.5 shrink-0">
+								{isToggling && <Spinner className="size-3.5" />}
+								<Switch
+									checked={isConnected}
+									onCheckedChange={() => handleToggle(name, status)}
+									disabled={isToggling}
+								/>
+							</div>
+						</div>
+					);
+				})
+			)}
 		</div>
 	);
 }

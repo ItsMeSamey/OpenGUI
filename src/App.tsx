@@ -594,6 +594,10 @@ function AppContent({ detachedProject }: { detachedProject?: string }) {
 														if (!activeSessionId) return;
 														void sendQueuedNow(activeSessionId, id);
 													}}
+													onReorder={(fromIndex, toIndex) => {
+														if (!activeSessionId) return;
+														reorderQueue(activeSessionId, fromIndex, toIndex);
+													}}
 												/>
 											</div>
 										)}
