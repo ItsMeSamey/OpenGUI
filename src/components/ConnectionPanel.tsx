@@ -10,20 +10,15 @@ import {
 	BookOpen,
 	CheckCircle2,
 	Folder,
-	FolderOpen,
 	Globe,
 	Layers,
-	Mic,
 	Play,
-	Plus,
 	PlugZap,
 	RotateCcw,
 	Settings,
 	Square,
 	Terminal,
-	Trash2,
 	Unplug,
-	Maximize2,
 } from "lucide-react";
 import type { McpStatus } from "@opencode-ai/sdk/v2/client";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
@@ -539,12 +534,10 @@ function GeneralSettings() {
 				</div>
 				<ThemeToggle />
 			</div>
-			<SttEndpointSetting />
 			<FileManagerSetting />
 			<TerminalSetting />
 			<ModelAgeFilterSetting />
 			<NotificationsToggle />
-			<ChatWidthSetting />
 			<AlertDialog>
 				<AlertDialogTrigger asChild>
 					<Button
@@ -642,27 +635,6 @@ function StorageInputSetting({
 			/>
 			<p className="text-[11px] text-muted-foreground">{helpText}</p>
 		</div>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// STT endpoint setting
-// ---------------------------------------------------------------------------
-
-function SttEndpointSetting() {
-	return (
-		<StorageInputSetting
-			storageKey={STORAGE_KEYS.STT_ENDPOINT}
-			id="stt-endpoint"
-			icon={Mic}
-			label="Voice transcription endpoint"
-			placeholder="https://your-whisper-server.com/transcribe"
-			helpText="URL of Whisper-compatible STT server. Mic button only appears when this is set."
-			inputType="url"
-			onChangeExtra={() =>
-				window.dispatchEvent(new Event("stt-endpoint-changed"))
-			}
-		/>
 	);
 }
 
@@ -871,53 +843,27 @@ interface SkillInfo {
 
 function SkillsTabContent() {
 	const bridge = window.electronAPI?.opencode;
-	const { activeDirectory } = useConnectionState();
+	const { activeDirectory, activeWorkspaceId } = useConnectionState();
 	const scopedDirectory = activeDirectory ?? undefined;
 
 	const [skills, setSkills] = useState<SkillInfo[]>([]);
-	const [paths, setPaths] = useState<string[]>([]);
-	const [urls, setUrls] = useState<string[]>([]);
 	const [loading, setLoading] = useState(true);
-	const [saving, setSaving] = useState(false);
 
 	const refresh = useCallback(async () => {
 		if (!bridge) return;
-		const [skillsRes, configRes] = await Promise.all([
-			bridge.getSkills(scopedDirectory),
-			bridge.getConfig(scopedDirectory),
-		]);
+		const skillsRes = await bridge.getSkills(
+			scopedDirectory,
+			activeWorkspaceId,
+		);
 		if (skillsRes.success && skillsRes.data) {
 			setSkills(skillsRes.data);
 		}
-		if (configRes.success && configRes.data?.skills) {
-			setPaths(configRes.data.skills.paths ?? []);
-			setUrls(configRes.data.skills.urls ?? []);
-		}
 		setLoading(false);
-	}, [bridge, scopedDirectory]);
+	}, [bridge, scopedDirectory, activeWorkspaceId]);
 
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
-
-	const saveConfig = async (nextPaths: string[], nextUrls: string[]) => {
-		if (!bridge) return;
-		setSaving(true);
-		try {
-			await bridge.updateConfig(scopedDirectory, {
-				skills: { paths: nextPaths, urls: nextUrls },
-			});
-			setPaths(nextPaths);
-			setUrls(nextUrls);
-			await new Promise((r) => setTimeout(r, 500));
-			const skillsRes = await bridge.getSkills(scopedDirectory);
-			if (skillsRes.success && skillsRes.data) {
-				setSkills(skillsRes.data);
-			}
-		} finally {
-			setSaving(false);
-		}
-	};
 
 	const getSourceType = (location: string): "local" | "url" => {
 		if (location.startsWith("http://") || location.startsWith("https://")) {
@@ -985,6 +931,8 @@ function SkillsTabContent() {
 
 function McpTabContent() {
 	const bridge = window.electronAPI?.opencode;
+	const { activeDirectory, activeWorkspaceId } = useConnectionState();
+	const scopedDirectory = activeDirectory ?? undefined;
 
 	const [mcpStatus, setMcpStatus] = useState<{ [key: string]: McpStatus }>({});
 	const [mcpTypes, setMcpTypes] = useState<{
@@ -996,8 +944,8 @@ function McpTabContent() {
 	const refresh = useCallback(async () => {
 		if (!bridge) return;
 		const [statusRes, configRes] = await Promise.all([
-			bridge.getMcpStatus(),
-			bridge.getConfig(),
+			bridge.getMcpStatus(scopedDirectory, activeWorkspaceId),
+			bridge.getConfig(scopedDirectory, activeWorkspaceId),
 		]);
 		if (statusRes.success && statusRes.data) {
 			setMcpStatus(statusRes.data);
@@ -1012,7 +960,7 @@ function McpTabContent() {
 			setMcpTypes(types);
 		}
 		setLoading(false);
-	}, [bridge]);
+	}, [bridge, scopedDirectory, activeWorkspaceId]);
 
 	useEffect(() => {
 		void refresh();
@@ -1023,9 +971,9 @@ function McpTabContent() {
 		setToggling(name);
 		try {
 			if (currentStatus.status === "connected") {
-				await bridge.disconnectMcp(name);
+				await bridge.disconnectMcp(scopedDirectory, activeWorkspaceId, name);
 			} else {
-				await bridge.connectMcp(name);
+				await bridge.connectMcp(scopedDirectory, activeWorkspaceId, name);
 			}
 			await new Promise((r) => setTimeout(r, 500));
 			await refresh();
@@ -1130,86 +1078,6 @@ function McpTabContent() {
 					);
 				})
 			)}
-		</div>
-	);
-}
-
-// Chat width setting
-// ---------------------------------------------------------------------------
-
-function ChatWidthSetting() {
-	const CHAT_WIDTH_MIN = 400;
-	const CHAT_WIDTH_MAX = 1200;
-	const CHAT_WIDTH_DEFAULT = 640;
-
-	const [width, setWidth] = useState(() => {
-		const stored = localStorage.getItem(STORAGE_KEYS.CHAT_WIDTH);
-		if (stored) {
-			const parsed = parseInt(stored, 10);
-			if (
-				Number.isFinite(parsed) &&
-				parsed >= CHAT_WIDTH_MIN &&
-				parsed <= CHAT_WIDTH_MAX
-			) {
-				return parsed;
-			}
-		}
-		return CHAT_WIDTH_DEFAULT;
-	});
-
-	const handleChange = (newWidth: string) => {
-		const parsed = parseInt(newWidth, 10);
-		if (Number.isFinite(parsed)) {
-			setWidth(parsed);
-		}
-	};
-
-	const handleBlur = () => {
-		const clamped = Math.min(CHAT_WIDTH_MAX, Math.max(CHAT_WIDTH_MIN, width));
-		setWidth(clamped);
-		localStorage.setItem(STORAGE_KEYS.CHAT_WIDTH, String(clamped));
-		window.dispatchEvent(new Event("chat-width-changed"));
-	};
-
-	const handleReset = () => {
-		setWidth(CHAT_WIDTH_DEFAULT);
-		localStorage.removeItem(STORAGE_KEYS.CHAT_WIDTH);
-		window.dispatchEvent(new Event("chat-width-changed"));
-	};
-
-	return (
-		<div className="space-y-2 pt-3 border-t">
-			<div className="flex items-center gap-2">
-				<Maximize2 className="size-4 text-muted-foreground" />
-				<Label htmlFor="chat-width" className="text-sm font-normal">
-					Chat width
-				</Label>
-			</div>
-			<div className="flex items-center gap-2">
-				<Input
-					id="chat-width"
-					type="number"
-					min={CHAT_WIDTH_MIN}
-					max={CHAT_WIDTH_MAX}
-					value={width}
-					onChange={(e) => handleChange(e.target.value)}
-					onBlur={handleBlur}
-					className="font-mono text-sm w-24"
-				/>
-				<Label className="text-sm text-muted-foreground">px</Label>
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					onClick={handleReset}
-					className="text-xs text-muted-foreground hover:text-foreground"
-				>
-					Reset
-				</Button>
-			</div>
-			<p className="text-[11px] text-muted-foreground">
-				Width of the chat area in pixels ({CHAT_WIDTH_MIN}-{CHAT_WIDTH_MAX}px).
-			</p>
 		</div>
 	);
 }

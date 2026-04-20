@@ -6,7 +6,6 @@ ArrowUp,
 	GitBranch,
 	ListEnd,
 	Loader2,
-	Mic,
 	Paperclip,
 	Plus,
 	Square,
@@ -52,7 +51,6 @@ import {
 	useMessages,
 	useModelState,
 	useSessionState,
-	type MessageEntry,
 } from "@/hooks/use-opencode";
 import { MAX_TEXTAREA_HEIGHT_PX } from "@/lib/constants";
 import { canNavigateHistoryAtCursor } from "@/lib/prompt-history";
@@ -190,14 +188,8 @@ export const PromptBox = React.forwardRef<HTMLTextAreaElement, PromptBoxProps>(
 const [historyIndex, setHistoryIndex] = React.useState(-1);
 	const [savedDraft, setSavedDraft] = React.useState("");
 	const [isCompacting, setIsCompacting] = React.useState(false);
-	const [contextPopoverOpen, setContextPopoverOpen] = React.useState(false);
-		const isApplyingHistoryRef = React.useRef(false);
+	const isApplyingHistoryRef = React.useRef(false);
 
-		const isSttAvailable = false;
-		const isRecording = false;
-		const isTranscribing = false;
-		const sttError = undefined;
-		const handleMicClick = async () => {};
 		const isDisabled = Boolean(props.disabled);
 
 		const {
@@ -216,14 +208,13 @@ const [historyIndex, setHistoryIndex] = React.useState(-1);
 			useSessionState();
 		const { messages } = useMessages();
 
-		// Detect if compaction is in-progress: session is busy AND the message immediately
-		// before the current running message is a summary (compaction marker)
+		// Detect if compaction is in-progress: session is busy AND message immediately
+		// before current running message is summary marker.
 		const isCompactingInProgress = React.useMemo(() => {
 			if (!isLoading || messages.length < 2) return false;
-			const lastMsg = messages[messages.length - 1];
-			const prevMsg = messages[messages.length - 2];
-			// Only show "Compacting" if the previous message is a summary
-			// and the last message is still being generated (role=user means it's waiting)
+			const lastMsg = messages.at(-1);
+			const prevMsg = messages.at(-2);
+			if (!lastMsg || !prevMsg) return false;
 			return (
 				lastMsg.info.role === "user" &&
 				prevMsg.info.role === "assistant" &&
@@ -232,7 +223,8 @@ const [historyIndex, setHistoryIndex] = React.useState(-1);
 			);
 		}, [isLoading, messages]);
 
-		const { worktreeParents, isLocalWorkspace } = useConnectionState();
+		const { activeWorkspaceId, worktreeParents, isLocalWorkspace } =
+			useConnectionState();
 		const syncingDraftRef = React.useRef(false);
 		const sessionDraftsRef = React.useRef(sessionDrafts);
 		const projectDir = React.useMemo(() => {
@@ -283,8 +275,9 @@ const [historyIndex, setHistoryIndex] = React.useState(-1);
 				getSessionDraftKey({
 					sessionId: activeSessionId,
 					directory: activeSessionId ? null : draftSessionDirectory,
+					workspaceId: activeWorkspaceId,
 				}),
-			[activeSessionId, draftSessionDirectory],
+			[activeSessionId, draftSessionDirectory, activeWorkspaceId],
 		);
 
 		React.useEffect(() => {
@@ -1163,51 +1156,6 @@ const [historyIndex, setHistoryIndex] = React.useState(-1);
 									</PopoverContent>
 								</Popover>
 							)}
-							{isSttAvailable && sttError && !hasValue && (
-								<span className="text-xs text-destructive max-w-[150px] truncate">
-									{sttError}
-								</span>
-							)}
-
-							{isSttAvailable && (
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<Button
-											type="button"
-											variant={isRecording ? "destructive" : "ghost"}
-											size="icon-sm"
-											disabled={isDisabled}
-											onClick={(e) => {
-												e.stopPropagation();
-												void handleMicClick();
-											}}
-											className={cn(
-												isRecording && "animate-pulse",
-												isTranscribing && "opacity-50 cursor-not-allowed",
-											)}
-										>
-											{isTranscribing ? (
-												<Loader2 className="animate-spin size-4" />
-											) : isRecording ? (
-												<Square className="size-3.5 fill-current" />
-											) : (
-												<Mic />
-											)}
-											<span className="sr-only">
-												{isRecording ? "Stop recording" : "Voice input"}
-											</span>
-										</Button>
-									</TooltipTrigger>
-									<TooltipContent>
-										{isTranscribing
-											? "Transcribing..."
-											: isRecording
-												? "Stop recording"
-												: "Voice input"}
-									</TooltipContent>
-								</Tooltip>
-							)}
-
 							{(isLoading && !hasValue) || isCompactingInProgress ? (
 								<Tooltip>
 									<TooltipTrigger asChild>

@@ -13,6 +13,7 @@ import { SubDialogHeader } from "@/components/SubDialogHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useConnectionState } from "@/hooks/use-opencode";
 import { getErrorMessage, openExternalLink } from "@/lib/utils";
 import type {
 	ProviderAuthMethod,
@@ -47,6 +48,7 @@ export function DialogConnectProvider({
 	onBack,
 }: DialogConnectProviderProps) {
 	const bridge = window.electronAPI?.opencode;
+	const { activeWorkspaceId } = useConnectionState();
 
 	// If only one method, auto-select it
 	const [selectedMethod, setSelectedMethod] = useState<"api" | "oauth" | null>(
@@ -87,12 +89,14 @@ export function DialogConnectProvider({
 		setConnecting(true);
 		setError(null);
 		try {
-			const res = await bridge.connectProvider(directory, providerID, {
-				type: "api",
-				key: apiKey.trim(),
-			});
+			const res = await bridge.connectProvider(
+				directory,
+				activeWorkspaceId,
+				providerID,
+				{ type: "api", key: apiKey.trim() },
+			);
 			if (res.success) {
-				await bridge.disposeInstance(directory);
+				await bridge.disposeInstance(directory, activeWorkspaceId);
 				setSuccess(true);
 				setTimeout(onConnected, 600);
 			} else {
@@ -103,7 +107,7 @@ export function DialogConnectProvider({
 		} finally {
 			setConnecting(false);
 		}
-	}, [bridge, directory, providerID, apiKey, onConnected]);
+	}, [bridge, directory, activeWorkspaceId, providerID, apiKey, onConnected]);
 
 	const pollOAuth = useCallback(
 		async (methodIndex?: number) => {
@@ -122,13 +126,14 @@ export function DialogConnectProvider({
 				try {
 					const res = await bridge.oauthCallback(
 						directory,
+						activeWorkspaceId,
 						providerID,
 						methodIndex,
 					);
 					if (res.success && res.data) {
 						pollingRef.current = false;
 						setOauthPolling(false);
-						await bridge.disposeInstance(directory);
+						await bridge.disposeInstance(directory, activeWorkspaceId);
 						setSuccess(true);
 						setTimeout(onConnected, 600);
 						return;
@@ -140,7 +145,7 @@ export function DialogConnectProvider({
 			};
 			void poll();
 		},
-		[bridge, directory, providerID, onConnected],
+		[bridge, directory, activeWorkspaceId, providerID, onConnected],
 	);
 
 	const startOAuth = useCallback(
@@ -151,6 +156,7 @@ export function DialogConnectProvider({
 			try {
 				const res = await bridge.oauthAuthorize(
 					directory,
+					activeWorkspaceId,
 					providerID,
 					methodIndex,
 				);
@@ -171,7 +177,7 @@ export function DialogConnectProvider({
 				setConnecting(false);
 			}
 		},
-		[bridge, directory, providerID, pollOAuth],
+		[bridge, directory, activeWorkspaceId, providerID, pollOAuth],
 	);
 
 	const handleOAuthCode = useCallback(async () => {
@@ -181,12 +187,13 @@ export function DialogConnectProvider({
 		try {
 			const res = await bridge.oauthCallback(
 				directory,
+				activeWorkspaceId,
 				providerID,
 				undefined,
 				oauthCode.trim(),
 			);
 			if (res.success && res.data) {
-				await bridge.disposeInstance(directory);
+				await bridge.disposeInstance(directory, activeWorkspaceId);
 				setSuccess(true);
 				setTimeout(onConnected, 600);
 			} else {
@@ -197,7 +204,7 @@ export function DialogConnectProvider({
 		} finally {
 			setConnecting(false);
 		}
-	}, [bridge, directory, providerID, oauthCode, onConnected]);
+	}, [bridge, directory, activeWorkspaceId, providerID, oauthCode, onConnected]);
 
 	// Clean up polling on unmount
 	useEffect(() => {
